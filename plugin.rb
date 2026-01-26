@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# name: discourse-reactions-qyinv
+# name: discourse-reactions
 # about: Allows users to react to a post with emojis. Modified by QyInvoLing.
 # meta_topic_id: 183261
 # version: 0.5
@@ -20,7 +20,7 @@ require_relative "lib/reaction_for_like_site_setting_enum"
 require_relative "lib/reactions_excluded_from_like_site_setting_validator"
 
 module ::DiscourseReactions
-  PLUGIN_NAME = "discourse-reactions-qyinv"
+  PLUGIN_NAME = "discourse-reactions"
 end
 
 require_relative "lib/discourse_reactions/engine"
