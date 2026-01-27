@@ -14,4 +14,7 @@
     display: inline-flex;
     padding: var(–control-space) 0;
   }
+  div.reactions div.discourse-reactions-list-emoji:first-child {
+    margin-left: 0;
+  }
 }
