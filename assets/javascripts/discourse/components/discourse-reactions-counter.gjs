@@ -216,7 +216,9 @@ export default class DiscourseReactionsCounter extends Component {
             @reactionsUsers={{this.reactionsUsers}}
             @getUsers={{this.getUsers}}
           />
-          <span class="reactions-counter">
+        {{/unless}}
+        {{#unless !this.onlyOneMainReaction}}
+          <span class="reactions-counter total-reactions-counter">
             {{@post.reaction_users_count}}
           </span>
         {{/unless}}
