@@ -12,5 +12,6 @@
   // This won't ber necessary once the reactions plugin is converted from widgets to Glimmer components
   .discourse-reactions-actions-button-shim {
     display: inline-flex;
+    padding: var(–control-space) 0;
   }
 }
