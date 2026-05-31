@@ -117,6 +117,7 @@ export default class DiscourseReactionsListEmoji extends Component {
               ""
             )
           }}
+          <span class="reaction-count">{{@reaction.count}}</span>
         {{/if}}
       </div>
     {{else}}
@@ -135,6 +136,7 @@ export default class DiscourseReactionsListEmoji extends Component {
               ""
             )
           }}
+          <span class="reaction-count">{{@reaction.count}}</span>
 
           <div class="user-list">
             <div class="container">
