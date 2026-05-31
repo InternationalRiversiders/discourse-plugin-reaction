@@ -12,16 +12,18 @@ html.discourse-reactions-no-select {
   .reactions {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
 
     .discourse-reactions-list-emoji {
       border-radius: 100px;
+      width: 20px;
       height: 20px;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 5px;
-      margin-right: 0.5em;
+
+      &:nth-of-type(1n + 4) {
+        display: none;
+      }
 
       .emoji {
         width: 1.1em;

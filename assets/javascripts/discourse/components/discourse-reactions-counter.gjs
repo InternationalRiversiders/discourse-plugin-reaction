@@ -194,11 +194,11 @@ export default class DiscourseReactionsCounter extends Component {
             @getUsers={{this.getUsers}}
           />
         {{/unless}}
-        {{#if this.onlyOneMainReaction}}
-          <span class="reactions-counter total-reactions-counter">
-            {{@post.reaction_users_count}}
-          </span>
-        {{/if}}
+
+        <span class="reactions-counter">
+          {{@post.reaction_users_count}}
+        </span>
+
         {{#if (and @post.yours this.onlyOneMainReaction)}}
           <div class="discourse-reactions-reaction-button my-likes">
             <DButton
