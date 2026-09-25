@@ -190,6 +190,19 @@ describe DiscourseReactions::CustomReactionsController do
       expect(parsed[0]["reaction"]["id"]).to eq(laughing_reaction.id)
     end
 
+    it "filters ignored reaction actors using the reaction query's user column" do
+      IgnoredUser.create!(user_id: user_1.id, ignored_user_id: user_2.id, expiring_at: 1.day.from_now)
+      sign_in(user_1)
+      get "/discourse-reactions/posts/reactions.json", params: { username: user_2.username }
+      expect(response.status).to eq(200)
+      expect(response.parsed_body).to eq([])
+
+      sign_in(user_2)
+      get "/discourse-reactions/posts/reactions.json", params: { username: user_2.username }
+      expect(response.status).to eq(200)
+      expect(response.parsed_body.map { |reaction| reaction["post_id"] }).to include(post_2.id)
+    end
+
     it "does not return reactions for private messages" do
       sign_in(user_1)
 
