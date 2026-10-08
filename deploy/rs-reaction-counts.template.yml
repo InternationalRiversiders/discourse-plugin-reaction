@@ -1,0 +1,9 @@
+# Keep the reactions plugin bundled with this Discourse version.
+# Fetch only the display overlay, outside the plugins directory.
+hooks:
+  after_code:
+    - exec:
+        cd: $home
+        cmd:
+          - git clone --depth 1 --branch main https://github.com/InternationalRiversiders/discourse-plugin-reaction.git /tmp/rs-reaction-patch
+          - bash /tmp/rs-reaction-patch/apply.sh .

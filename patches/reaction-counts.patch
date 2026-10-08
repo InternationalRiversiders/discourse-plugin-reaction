@@ -1,0 +1,36 @@
+--- a/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-list-emoji.gjs
++++ b/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-list-emoji.gjs
+@@ -20,6 +20,7 @@
+             ""
+           )
+         }}
++        <span class="rs-reaction-count" aria-hidden="true">{{@reaction.count}}</span>
+       {{/if}}
+     </span>
+   </template>
+--- a/plugins/discourse-reactions/assets/stylesheets/common/discourse-reactions.scss
++++ b/plugins/discourse-reactions/assets/stylesheets/common/discourse-reactions.scss
+@@ -299,3 +299,23 @@
+ nav.post-controls .actions .reaction-button {
+   margin: 0;
+ }
++
++// Riverside: show every reaction with its count outside the users menu.
++.discourse-reactions-counter {
++  .discourse-reactions-list .reactions {
++    flex-wrap: wrap;
++    gap: 0.5em;
++
++    .discourse-reactions-list-emoji {
++      gap: 0.25em;
++
++      &:nth-of-type(1n + 4) {
++        display: flex;
++      }
++    }
++  }
++
++  .reactions-counter {
++    display: none;
++  }
++}
