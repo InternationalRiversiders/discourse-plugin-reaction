@@ -187,10 +187,16 @@ index 0000000..8794f74
 +  };
 +});
 diff --git a/plugins/discourse-reactions/assets/stylesheets/common/discourse-reactions.scss b/plugins/discourse-reactions/assets/stylesheets/common/discourse-reactions.scss
-index 265b1c2..d593408 100644
+index 265b1c2..9c2f9e5 100644
 --- a/plugins/discourse-reactions/assets/stylesheets/common/discourse-reactions.scss
 +++ b/plugins/discourse-reactions/assets/stylesheets/common/discourse-reactions.scss
-@@ -299,3 +299,85 @@ nav.post-controls .actions .reaction-button:focus {
+@@ -1,3 +1,5 @@
++@use "lib/viewport";
++
+ html.discourse-reactions-no-select {
+   -webkit-touch-callout: none; /* Disables long-touch menu */
+ 
+@@ -299,3 +301,85 @@ nav.post-controls .actions .reaction-button:focus {
  nav.post-controls .actions .reaction-button {
    margin: 0;
  }
