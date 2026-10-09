@@ -1,5 +1,5 @@
 # Keep the reactions plugin bundled with this Discourse version.
-# Fetch only the display overlay, outside the plugins directory.
+# Fetch the display and deny-list overlays, outside the plugins directory.
 hooks:
   after_code:
     - exec:

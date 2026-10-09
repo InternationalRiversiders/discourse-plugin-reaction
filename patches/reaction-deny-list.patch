@@ -1,0 +1,318 @@
+--- a/app/models/emoji.rb
++++ b/app/models/emoji.rb
+@@ -90,6 +90,31 @@
+   def self.custom?(name)
+     name, _ = normalize_name(name)
+     Emoji.custom.detect { |e| e.name == name }.present?
++  end
++
++  # Reaction authorization is separate from emoji existence/rendering.
++  def self.reaction_allowed?(name)
++    name.is_a?(String) && name.present? && exists?(name) &&
++      !denied_reaction_names.include?(name)
++  end
++
++  # Include aliases, optional surrounding colons, and skin-tone spellings so
++  # both Ruby checks and SQL-backed API lists enforce the same policy.
++  def self.denied_reaction_names
++    Discourse.cache.fetch(cache_key("denied_reactions_emojis")) do
++      result = Set.new
++      SiteSetting.emoji_deny_list.to_s.split("|").reject(&:blank?).each do |code|
++        name, tone = normalize_name(code)
++        canonical = self[code]&.name || resolve_alias(name)
++        names = [name, canonical, *Array(aliases[canonical])].uniq
++        tones = tone ? [":t#{tone}"] : ["", *(1..6).map { |t| ":t#{t}" }]
++        names.product(tones).each do |base, suffix|
++          value = "#{base}#{suffix}"
++          result.merge([value, ":#{value}", "#{value}:", ":#{value}:"])
++        end
++      end
++      result
++    end
+   end
+
+   def self.exists?(name)
+@@ -156,7 +181,7 @@
+   end
+
+   def self.clear_cache
+-    %w[custom standard translations allowed denied all].each do |key|
++    %w[custom standard translations allowed denied denied_reactions all].each do |key|
+       Discourse.cache.delete(cache_key("#{key}_emojis"))
+     end
+     global_emoji_cache.clear
+--- a/plugins/discourse-reactions/app/models/discourse_reactions/reaction.rb
++++ b/plugins/discourse-reactions/app/models/discourse_reactions/reaction.rb
+@@ -9,6 +9,12 @@
+     has_many :reaction_users, class_name: "DiscourseReactions::ReactionUser"
+     has_many :users, through: :reaction_users
+     belongs_to :post
++
++    validate :emoji_must_be_allowed, if: :will_save_change_to_reaction_value?
++
++    def emoji_must_be_allowed
++      errors.add(:reaction_value, :invalid) unless Emoji.reaction_allowed?(reaction_value)
++    end
+
+     scope :positive, -> { where(reaction_value: positive_reactions) }
+     scope :negative_or_neutral, -> { where(reaction_value: negative_or_neutral_reactions) }
+@@ -25,7 +31,7 @@
+     end
+
+     def self.valid?(reaction_value)
+-      return false if reaction_value.blank?
++      return false unless Emoji.reaction_allowed?(reaction_value)
+
+       if SiteSetting.discourse_reactions_allow_any_emoji
+         Emoji.exists?(reaction_value)
+--- a/plugins/discourse-reactions/app/services/discourse_reactions/reaction_manager.rb
++++ b/plugins/discourse-reactions/app/services/discourse_reactions/reaction_manager.rb
+@@ -30,6 +30,11 @@
+
+       if (@like && !@user.guardian.can_delete_post_action?(@like)) ||
+            (reaction_user && !@user.guardian.can_delete_reaction_user?(reaction_user))
++        raise Discourse::InvalidAccess
++      end
++
++      # Existing denied reactions may be removed, but never added or switched to.
++      unless Emoji.reaction_allowed?(@reaction_value) || @previous_reaction_value == @reaction_value
+         raise Discourse::InvalidAccess
+       end
+
+--- a/plugins/discourse-reactions/app/services/discourse_reactions/post_reaction/toggle.rb
++++ b/plugins/discourse-reactions/app/services/discourse_reactions/post_reaction/toggle.rb
+@@ -34,8 +34,11 @@
+         guardian.can_see?(post)
+       end
+
+-      def reaction_is_valid(params:)
+-        DiscourseReactions::Reaction.valid?(params.reaction)
++      def reaction_is_valid(params:, guardian:, post:)
++        DiscourseReactions::Reaction.valid?(params.reaction) ||
++          (guardian.user.present? &&
++            DiscourseReactions::ReactionManager.reaction_value_for(user: guardian.user, post: post) ==
++              params.reaction)
+       end
+
+       def build_reaction_manager(params:, guardian:, post:)
+@@ -71,7 +74,7 @@
+             reactions: [
+               reaction_manager.reaction_value,
+               reaction_manager.previous_reaction_value,
+-            ].compact.uniq,
++            ].compact.uniq.select { |value| Emoji.reaction_allowed?(value) },
+           },
+           post.topic.secure_audience_publish_messages,
+         )
+--- a/plugins/discourse-reactions/lib/discourse_reactions/reactions_serializer_helpers.rb
++++ b/plugins/discourse-reactions/lib/discourse_reactions/reactions_serializer_helpers.rb
+@@ -97,6 +97,12 @@
+         }
+       end
+
++      reactions.select! { |reaction| Emoji.reaction_allowed?(reaction[:id]) }
++      if Emoji.denied_reaction_names.present?
++        post.reaction_users_count = reaction_users_count_map[post.id] =
++          reactions.sum { |reaction| reaction[:count].to_i }
++      end
++
+       precomputed_reactions_map[post.id] = reactions.sort_by do |reaction|
+         [-reaction[:count].to_i, reaction[:id]]
+       end
+@@ -107,6 +113,10 @@
+   end
+
+   def self.reactions_for_post(post, scope = nil)
++    unfiltered_reactions_for_post(post, scope).select { |reaction| Emoji.reaction_allowed?(reaction[:id]) }
++  end
++
++  def self.unfiltered_reactions_for_post(post, scope = nil)
+     return post.precomputed_reactions unless post.precomputed_reactions.nil?
+
+     ignored_ids = scope&.user&.ignored_user_ids || []
+@@ -194,6 +204,11 @@
+   end
+
+   def self.current_user_reaction_for_post(post, scope)
++    reaction = unfiltered_current_user_reaction_for_post(post, scope)
++    reaction if reaction && Emoji.reaction_allowed?(reaction[:id])
++  end
++
++  def self.unfiltered_current_user_reaction_for_post(post, scope)
+     return nil if scope.is_anonymous?
+
+     post.emoji_reactions.each do |reaction|
+@@ -227,6 +242,10 @@
+   end
+
+   def self.reaction_users_count_for_post(post, scope = nil)
++    if Emoji.denied_reaction_names.present?
++      return reactions_for_post(post, scope).sum { |reaction| reaction[:count].to_i }
++    end
++
+     return post.reaction_users_count unless post.reaction_users_count.nil?
+
+     ignored_ids = scope&.user&.ignored_user_ids || []
+--- a/plugins/discourse-reactions/app/controllers/discourse_reactions/custom_reactions_controller.rb
++++ b/plugins/discourse-reactions/app/controllers/discourse_reactions/custom_reactions_controller.rb
+@@ -49,6 +49,7 @@
+         .includes(:user, :post, :reaction)
+         .where(user_id: user.id)
+         .where.not(discourse_reactions_reactions: { reaction_users_count: nil })
++        .where.not(discourse_reactions_reactions: { reaction_value: Emoji.denied_reaction_names.to_a })
+
+     reaction_users = secure_reaction_users!(reaction_users)
+
+@@ -83,6 +84,7 @@
+         .joins(:reaction)
+         .where(post_id: post_ids)
+         .where.not(discourse_reactions_reactions: { reaction_users_count: nil })
++        .where.not(discourse_reactions_reactions: { reaction_value: Emoji.denied_reaction_names.to_a })
+     reaction_users =
+       DiscourseReactions::PostReactionsQuery.apply_ignored_users_filter(
+         reaction_users,
+@@ -147,6 +149,7 @@
+       reaction_users = reaction_users.sort { |a, b| b.created_at <=> a.created_at }
+     end
+
++    reaction_users.select! { |ru| Emoji.reaction_allowed?(ru.reaction.reaction_value) }
+     render_serialized reaction_users.first(PAGE_SIZE), UserReactionSerializer
+   end
+
+@@ -268,6 +271,7 @@
+       reaction_users << format_reaction_user(reaction, count: reaction_user_counts[reaction.id])
+     end
+
++    reaction_users.select! { |reaction| Emoji.reaction_allowed?(reaction[:id]) }
+     render_json_dump(reaction_users: reaction_users)
+   end
+
+--- a/plugins/discourse-reactions/lib/discourse_reactions/post_reactions_query.rb
++++ b/plugins/discourse-reactions/lib/discourse_reactions/post_reactions_query.rb
+@@ -117,11 +117,13 @@
+         limit: limit,
+         offset: offset,
+         current_user_id: current_user_id,
++        denied_reactions: Emoji.denied_reaction_names.to_a,
+       }
+     end
+
+     def plain_likes_scope
+       scope = PostAction.where(post_id: post.id).where(shadow_like_filter, like: like_type)
++      return scope.none unless Emoji.reaction_allowed?(main_reaction)
+       filter_ignored_users(scope, user_column: "post_actions.user_id")
+     end
+
+@@ -133,6 +135,7 @@
+         INNER JOIN discourse_reactions_reactions dr ON dr.id = drru.reaction_id
+         INNER JOIN users u ON u.id = drru.user_id
+         WHERE drru.post_id = :post_id
++        #{"AND dr.reaction_value NOT IN (:denied_reactions)" if Emoji.denied_reaction_names.present?}
+         #{ignored_users_filter_sql("drru.user_id")}
+       SQL
+     end
+@@ -145,6 +148,7 @@
+         INNER JOIN users u ON u.id = post_actions.user_id
+         WHERE post_actions.post_id = :post_id
+           AND (#{shadow_like_filter})
++          #{"AND 1 = 0" unless Emoji.reaction_allowed?(main_reaction)}
+         #{ignored_users_filter_sql("post_actions.user_id")}
+       SQL
+     end
+@@ -163,6 +167,11 @@
+     end
+
+     def filter_ignored_users(scope, user_column:)
++      if scope.klass == ReactionUser && Emoji.denied_reaction_names.present?
++        scope = scope.where.not(
++          reaction_id: Reaction.where(reaction_value: Emoji.denied_reaction_names.to_a).select(:id),
++        )
++      end
+       self.class.apply_ignored_users_filter(
+         scope,
+         user_column: user_column,
+--- a/plugins/chat/lib/chat/message_reactor.rb
++++ b/plugins/chat/lib/chat/message_reactor.rb
+@@ -41,7 +41,8 @@
+     end
+
+     def validate_reaction!(react_action, emoji)
+-      if ![ADD_REACTION, REMOVE_REACTION].include?(react_action) || !Emoji.exists?(emoji)
++      if ![ADD_REACTION, REMOVE_REACTION].include?(react_action) || !Emoji.exists?(emoji) ||
++           (react_action == ADD_REACTION && !Emoji.reaction_allowed?(emoji))
+         raise Discourse::InvalidParameters
+       end
+     end
+--- a/plugins/chat/app/models/chat/message_reaction.rb
++++ b/plugins/chat/app/models/chat/message_reaction.rb
+@@ -8,6 +8,11 @@
+     belongs_to :user
+
+     validates :emoji, length: { maximum: 100 }
++    validate :emoji_must_be_allowed, if: :will_save_change_to_emoji?
++
++    def emoji_must_be_allowed
++      errors.add(:emoji, :invalid) unless Emoji.reaction_allowed?(emoji)
++    end
+   end
+ end
+
+--- a/plugins/chat/app/serializers/chat/message_serializer.rb
++++ b/plugins/chat/app/serializers/chat/message_serializer.rb
+@@ -72,7 +72,7 @@
+         .reactions
+         .group_by(&:emoji)
+         .filter_map do |emoji, reactions|
+-          next unless Emoji.exists?(emoji)
++          next unless Emoji.reaction_allowed?(emoji)
+
+           users = reactions.take(5).map(&:user)
+
+--- a/plugins/chat/lib/chat/message_reaction_users_query.rb
++++ b/plugins/chat/lib/chat/message_reaction_users_query.rb
+@@ -59,12 +59,17 @@
+         limit: limit,
+         offset: offset,
+         current_user_id: current_user_id,
++        denied_reactions: Emoji.denied_reaction_names.to_a,
+       }
+     end
+
+     def emoji_filter_sql
+-      return "" if emoji.blank?
+-      "AND cmr.emoji = :emoji"
++      filters = []
++      filters << "AND cmr.emoji = :emoji" if emoji.present?
++      if Emoji.denied_reaction_names.present?
++        filters << "AND cmr.emoji NOT IN (:denied_reactions)"
++      end
++      filters.join("\n")
+     end
+
+     def ignored_users_filter_sql(user_column = "u.id")
+--- a/plugins/chat/app/services/chat/publisher.rb
++++ b/plugins/chat/app/services/chat/publisher.rb
+@@ -147,6 +147,10 @@
+     end
+
+     def self.publish_reaction!(chat_channel, chat_message, action, user, emoji)
++      unless Emoji.reaction_allowed?(emoji)
++        chat_message.association(:reactions).reset
++        return publish_refresh!(chat_channel, chat_message)
++      end
+       message_bus_targets = calculate_publish_targets(chat_channel, chat_message)
+       publish_to_targets!(
+         message_bus_targets,
+--- a/plugins/discourse-reactions/plugin.rb
++++ b/plugins/discourse-reactions/plugin.rb
+@@ -186,7 +186,9 @@
+     end,
+   ) { DiscourseReactions::ReactionsSerializerHelpers.op_reactions_data_for_topic(object, scope) }
+
+-  add_to_serializer(:topic_view, :valid_reactions) { DiscourseReactions::Reaction.valid_reactions }
++  add_to_serializer(:topic_view, :valid_reactions) do
++    DiscourseReactions::Reaction.valid_reactions.select { |value| Emoji.reaction_allowed?(value) }
++  end
+
+   add_model_callback(User, :before_destroy) do
+     DiscourseReactions::ReactionUser.where(user_id: id).delete_all

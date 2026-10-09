@@ -1,12 +1,12 @@
-# Riverside Reaction Counts Patch
+# Riverside Reactions Patches
 
-本仓库的 `main` 已从完整 Discourse reactions 插件 fork 改为轻量显示补丁。
+本仓库的 `main` 已从完整 Discourse reactions 插件 fork 改为小型补丁集合。
 请保留 Discourse 自带的 `plugins/discourse-reactions`，不要再删除官方插件，
 也不要将本仓库克隆到 `plugins/discourse-reactions`。
 
 效果：帖子外部直接展示每种表情及其数量，例如 `👍 12 😂 5 ❤️ 3`；
 显示全部反应种类、窄屏换行，并隐藏重复的总数。
-后端、权限校验、通知、选择器和用户列表均使用当前 Discourse 的官方实现。
+以当前 Discourse 的官方实现为基础，保留显示定制，并补齐 reaction 的禁用表情校验。
 补丁新增一个布尔设置 `discourse_reactions_show_individual_counts`，默认开启以保持
 Riverside 当前展示。管理员可在 Reactions 插件设置或全站设置搜索该名称：
 
@@ -42,7 +42,7 @@ bash apply.sh /var/www/discourse
 
 ## 维护和回滚
 
-只需维护 `patches/reaction-counts.patch`。模板不内嵌补丁正文；后续补丁提交到
+维护 `patches/` 中的显示和安全补丁。模板不内嵌补丁正文；后续补丁提交到
 `main` 后，下次构建自动拉取。已运行的容器不会被 Git 提交自动修改。
 在不能访问本仓库的构建环境中，克隆会失败；请通过已有的部署凭据机制
 提供只读访问，不要把令牌写进 YAML 或仓库。
@@ -54,3 +54,21 @@ bash apply.sh /var/www/discourse
 2026-10-08：显示补丁已在 Discourse `ee099f4f5acd9624e58228f34c69589728287991`
 部署验证，覆盖桌面、390px/320px、单种和八种 reaction、换行、计数、用户菜单。
 部署模板的切换不改变已上线的相同补丁内容。
+
+## 禁用表情安全补丁
+
+`patches/reaction-deny-list.patch` 让帖子和聊天 reaction 的写入及读取遵守
+`emoji_deny_list`。它不修改 `Emoji.exists?` 的存在性语义，也不硬编码任何禁用表情。
+校验覆盖 canonical code、别名、可选冒号以及肤色形式；聊天的 Unicode 输入
+先走官方转换，再校验。显示模式开关不会关闭这项安全修复。
+
+- API、服务和模型阻止新增/改成禁用 reaction。
+- 已有记录不删除：帖子、主题预载数据、当前用户 reaction、用户列表和活动流、
+  聊天消息及用户列表都过滤禁用表情。分页统计同步过滤。
+- 已有禁用 reaction 可以撤销或替换为允许的 reaction，但不能重新添加。
+- 管理员解除禁用后，尚未撤销的历史记录可以重新显示。
+- 不重算历史点赞、徽章等业务数据，不清除 App 离线缓存；客户端重新拉取接口后生效。
+
+应用脚本会先检查所有待应用补丁，再统一应用；任何不兼容都会中止构建。
+回归测试在 `test/reaction-deny-list-test.rb`，只允许独立数据库
+`river_reaction_security_test` 且 `RIVER_DISPOSABLE=1` 的环境运行。
