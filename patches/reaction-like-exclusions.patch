@@ -1,0 +1,28 @@
+--- a/plugins/discourse-reactions/app/models/discourse_reactions/reaction.rb
++++ b/plugins/discourse-reactions/app/models/discourse_reactions/reaction.rb
+@@ -45,7 +45,24 @@
+     end
+ 
+     def self.reactions_excluded_from_like
+-      SiteSetting.discourse_reactions_excluded_from_like.to_s.split("|")
++      setting = SiteSetting.discourse_reactions_excluded_from_like.to_s
++      key = "rs_like_exclusions:v1:#{Emoji::EMOJI_VERSION}:#{Plugin::CustomEmoji.cache_key}:#{setting}"
++      Discourse.cache.fetch(key) do
++        result = Set.new
++        setting.split("|").reject(&:blank?).each do |code|
++          match = code.match(/\A:?(.+?)(?::t([1-6]))?:?\z/)
++          next unless match
++          name, tone = match.captures
++          canonical = Emoji[name]&.name || name
++          names = [name, canonical, *Array(Emoji.aliases[canonical])].uniq
++          tones = tone ? [":t#{tone}"] : ["", *(1..6).map { |t| ":t#{t}" }]
++          names.product(tones).each do |base, suffix|
++            value = "#{base}#{suffix}"
++            result.merge([value, ":#{value}", "#{value}:", ":#{value}:"])
++          end
++        end
++        result.to_a
++      end
+     end
+ 
+     def self.reactions_counting_as_like

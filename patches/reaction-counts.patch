@@ -1,5 +1,52 @@
+diff --git a/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-actions.gjs b/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-actions.gjs
+index d49ace4..b830833 100644
+--- a/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-actions.gjs
++++ b/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-actions.gjs
+@@ -210,6 +210,28 @@ export default class DiscourseReactionsActions extends Component {
+     }`;
+   }
+ 
++  get canFollowReaction() {
++    return (
++      this.canReact &&
++      !this.data.yours &&
++      (!this.currentUser || this.data.user_id !== this.currentUser.id)
++    );
++  }
++
++  @action
++  followReaction(reaction) {
++    if (
++      !this.canFollowReaction ||
++      this.data.current_user_reaction?.id === reaction ||
++      !this.data.reactions.some((entry) => entry.id === reaction)
++    ) {
++      return;
++    }
++    // Use the existing picker path, including login, optimistic update,
++    // permission checks, server validation, and rollback on failure.
++    return this.toggle({ reaction });
++  }
++
+   get showReactionsPicker() {
+     if (!this.reactionsPickerExpanded || !this.siteSettings.enable_emoji) {
+       return false;
+@@ -759,7 +781,12 @@ export default class DiscourseReactionsActions extends Component {
+         (hash
+           counter=(curryComponent
+             DiscourseReactionsCounter
+-            (lazyHash post=this.data position=@position)
++            (lazyHash
++              post=this.data
++              position=@position
++              react=this.followReaction
++              canReact=this.canFollowReaction
++            )
+           )
+           button=(curryComponent
+             DiscourseReactionsReactionButton
 diff --git a/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-counter.gjs b/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-counter.gjs
-index ada2379..8b3e06d 100644
+index ada2379..34fac1e 100644
 --- a/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-counter.gjs
 +++ b/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-counter.gjs
 @@ -24,6 +24,9 @@ export default class DiscourseReactionsCounter extends Component {
@@ -12,16 +59,64 @@ index ada2379..8b3e06d 100644
      const mainReaction =
        this.siteSettings.discourse_reactions_reaction_for_like;
  
+@@ -68,10 +71,15 @@ export default class DiscourseReactionsCounter extends Component {
+ 
+     event.stopPropagation();
+     event.preventDefault();
+-    this.#toggleMenu(event.currentTarget);
++    const filter =
++      this.siteSettings.discourse_reactions_show_individual_counts &&
++      this.siteSettings.enable_emoji
++        ? event.target.closest("[data-rs-reaction]")?.dataset.rsReaction
++        : null;
++    this.#toggleMenu(event.currentTarget, filter);
+   }
+ 
+-  #toggleMenu(trigger) {
++  #toggleMenu(trigger, filter) {
+     this.menu.show(trigger, {
+       identifier: MENU_IDENTIFIER,
+       component: DiscourseReactionsUsersMenu,
+@@ -80,7 +88,12 @@ export default class DiscourseReactionsCounter extends Component {
+       arrow: true,
+       placement: "bottom",
+       offset: 15,
+-      data: { post: this.args.post },
++      data: {
++        post: this.args.post,
++        filter,
++        react: this.args.react,
++        canReact: () => this.args.canReact,
++      },
+     });
+   }
+ 
 diff --git a/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-list-emoji.gjs b/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-list-emoji.gjs
-index 1e97eda..3134cb4 100644
+index 1e97eda..3f096ac 100644
 --- a/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-list-emoji.gjs
 +++ b/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-list-emoji.gjs
-@@ -20,6 +20,9 @@ export default class DiscourseReactionsListEmoji extends Component {
+@@ -10,7 +10,11 @@ export default class DiscourseReactionsListEmoji extends Component {
+   }
+ 
+   <template>
+-    <span class="discourse-reactions-list-emoji" id={{this.elementId}}>
++    <span
++      class="discourse-reactions-list-emoji"
++      id={{this.elementId}}
++      data-rs-reaction={{@reaction.id}}
++    >
+       {{#if @reaction.count}}
+         {{discourseReactionsEmoji
+           @reaction.id
+@@ -20,6 +24,12 @@ export default class DiscourseReactionsListEmoji extends Component {
              ""
            )
          }}
 +        {{#if this.siteSettings.discourse_reactions_show_individual_counts}}
-+          <span class="rs-reaction-count" aria-hidden="true">{{@reaction.count}}</span>
++          <span
++            class="rs-reaction-count"
++            aria-hidden="true"
++          >{{@reaction.count}}</span>
 +        {{/if}}
        {{/if}}
      </span>
@@ -62,6 +157,172 @@ index 3d2a624..56ee8d3 100644
          </span>
        {{/if}}
      </span>
+diff --git a/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-users-menu.gjs b/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-users-menu.gjs
+index 1058467..0c2f058 100644
+--- a/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-users-menu.gjs
++++ b/plugins/discourse-reactions/assets/javascripts/discourse/components/discourse-reactions-users-menu.gjs
+@@ -4,8 +4,10 @@ import { fn } from "@ember/helper";
+ import { on } from "@ember/modifier";
+ import { action } from "@ember/object";
+ import { service } from "@ember/service";
++import DButton from "discourse/ui-kit/d-button";
++import reactionFilterScroll from "../modifiers/reaction-filter-scroll";
+ import UsersPopup from "discourse/components/user/users-popup";
+-import { eq } from "discourse/truth-helpers";
++import { and, eq } from "discourse/truth-helpers";
+ import dConcatClass from "discourse/ui-kit/helpers/d-concat-class";
+ import dIcon from "discourse/ui-kit/helpers/d-icon";
+ import { i18n } from "discourse-i18n";
+@@ -69,6 +71,12 @@ export default class DiscourseReactionsUsersMenu extends Component {
+ 
+   constructor() {
+     super(...arguments);
++    if (
++      this.siteSettings.discourse_reactions_show_individual_counts &&
++      this.reactions.some((reaction) => reaction.id === this.args.data.filter)
++    ) {
++      this.activeFilter = this.args.data.filter;
++    }
+     this.router.on("routeWillChange", this.args.close);
+   }
+ 
+@@ -85,6 +93,37 @@ export default class DiscourseReactionsUsersMenu extends Component {
+     return this.post.reactions || [];
+   }
+ 
++  get selectedReaction() {
++    return (
++      this.activeFilter ||
++      (this.reactions.length === 1 ? this.reactions[0].id : null)
++    );
++  }
++
++  get alreadyUsed() {
++    return this.selectedReaction === this.post.current_user_reaction?.id;
++  }
++
++  get followDisabled() {
++    return this.alreadyUsed || !this.args.data.canReact?.();
++  }
++
++  get followLabel() {
++    return this.alreadyUsed
++      ? "discourse_reactions.already_used"
++      : "discourse_reactions.use_reaction";
++  }
++
++  @action
++  useReaction() {
++    if (!this.selectedReaction || this.followDisabled) {
++      return;
++    }
++    // Close immediately so a second click cannot toggle the reaction back off.
++    this.args.data.react?.(this.selectedReaction);
++    this.args.close();
++  }
++
+   get showFilters() {
+     // Every reaction renders as the like icon without emoji, so per-reaction
+     // filters would be indistinguishable.
+@@ -131,32 +170,79 @@ export default class DiscourseReactionsUsersMenu extends Component {
+       <:header as |resetAndReload|>
+         {{this.registerReset resetAndReload}}
+         {{#if this.showFilters}}
+-          <div class="users-popup__header">
+-            <button
+-              class={{dConcatClass
+-                "users-popup__filter"
+-                (unless this.activeFilter "is-active")
+-              }}
+-              data-reaction-filter="all"
+-              type="button"
+-              {{on "click" (fn this.selectFilter null)}}
+-            >
+-              {{i18n "discourse_reactions.users_popup.all"}}
+-            </button>
+-            {{#each this.reactions as |reaction|}}
++          <div
++            class={{if
++              this.siteSettings.discourse_reactions_show_individual_counts
++              "rs-reaction-filter-strip"
++            }}
++            {{reactionFilterScroll
++              this.siteSettings.discourse_reactions_show_individual_counts
++              this.activeFilter
++              this.reactions
++            }}
++          >
++            {{#if this.siteSettings.discourse_reactions_show_individual_counts}}
++              <DButton
++                class="btn-flat rs-filter-prev"
++                @icon="chevron-left"
++                @title="discourse_reactions.scroll_left"
++                @ariaLabel="discourse_reactions.scroll_left"
++              />
++            {{/if}}
++            <div class="users-popup__header">
+               <button
+                 class={{dConcatClass
+                   "users-popup__filter"
+-                  (if (eq reaction.id this.activeFilter) "is-active")
++                  (unless this.activeFilter "is-active")
+                 }}
+-                data-reaction-filter={{reaction.id}}
++                data-reaction-filter="all"
+                 type="button"
+-                {{on "click" (fn this.selectFilter reaction.id)}}
++                {{on "click" (fn this.selectFilter null)}}
+               >
+-                {{discourseReactionsEmoji reaction.id}}
+-                <span>{{reaction.count}}</span>
++                {{i18n "discourse_reactions.users_popup.all"}}
+               </button>
+-            {{/each}}
++              {{#each this.reactions as |reaction|}}
++                <button
++                  class={{dConcatClass
++                    "users-popup__filter"
++                    (if (eq reaction.id this.activeFilter) "is-active")
++                  }}
++                  data-reaction-filter={{reaction.id}}
++                  type="button"
++                  {{on "click" (fn this.selectFilter reaction.id)}}
++                >
++                  {{discourseReactionsEmoji reaction.id}}
++                  <span>{{reaction.count}}</span>
++                </button>
++              {{/each}}
++            </div>
++            {{#if this.siteSettings.discourse_reactions_show_individual_counts}}
++              <DButton
++                class="btn-flat rs-filter-next"
++                @icon="chevron-right"
++                @title="discourse_reactions.scroll_right"
++                @ariaLabel="discourse_reactions.scroll_right"
++              />
++            {{/if}}
++          </div>
++        {{/if}}
++        {{#if (and this.siteSettings.discourse_reactions_show_individual_counts this.siteSettings.enable_emoji)}}
++          <div class="rs-follow-reaction">
++            {{#if this.selectedReaction}}
++              <DButton
++                class="btn-default rs-use-reaction"
++                data-follow-reaction={{this.selectedReaction}}
++                @action={{this.useReaction}}
++                @disabled={{this.followDisabled}}
++              >
++                {{discourseReactionsEmoji this.selectedReaction}}
++                <span>{{i18n this.followLabel}}</span>
++              </DButton>
++            {{else}}
++              <span class="rs-follow-hint">{{i18n
++                  "discourse_reactions.choose_reaction"
++                }}</span>
++            {{/if}}
+           </div>
+         {{/if}}
+       </:header>
 diff --git a/plugins/discourse-reactions/assets/javascripts/discourse/initializers/discourse-reactions.gjs b/plugins/discourse-reactions/assets/javascripts/discourse/initializers/discourse-reactions.gjs
 index 6306cfa..10d898b 100644
 --- a/plugins/discourse-reactions/assets/javascripts/discourse/initializers/discourse-reactions.gjs
@@ -82,6 +343,84 @@ index 6306cfa..10d898b 100644
        dag.replace(buttonKeys.LIKE, ReactionsActionButton);
        dag.add("discourse-reactions-actions", ReactionsActionSummary, {
          before: buttonKeys.REPLIES,
+diff --git a/plugins/discourse-reactions/assets/javascripts/discourse/modifiers/reaction-filter-scroll.js b/plugins/discourse-reactions/assets/javascripts/discourse/modifiers/reaction-filter-scroll.js
+new file mode 100644
+index 0000000..ddaa197
+--- /dev/null
++++ b/plugins/discourse-reactions/assets/javascripts/discourse/modifiers/reaction-filter-scroll.js
+@@ -0,0 +1,72 @@
++import { modifier } from "ember-modifier";
++
++export default modifier((element, [enabled, activeFilter, reactions]) => {
++  if (!enabled || !reactions?.length) {
++    return;
++  }
++  const tabs = element.querySelector(".users-popup__header");
++  const previous = element.querySelector(".rs-filter-prev");
++  const next = element.querySelector(".rs-filter-next");
++  if (!tabs || !previous || !next) {
++    return;
++  }
++  let frame;
++  const buttons = () => [...tabs.querySelectorAll("[data-reaction-filter]")];
++  const update = () => {
++    const rect = tabs.getBoundingClientRect();
++    const rects = buttons().map((button) => button.getBoundingClientRect());
++    previous.disabled = !rects.some((r) => r.left < rect.left - 1);
++    next.disabled = !rects.some((r) => r.right > rect.right + 1);
++  };
++  const reveal = (button) => {
++    if (!button) {
++      return;
++    }
++    const rect = tabs.getBoundingClientRect();
++    const target = button.getBoundingClientRect();
++    if (target.left < rect.left) {
++      tabs.scrollLeft += target.left - rect.left;
++    } else if (target.right > rect.right) {
++      tabs.scrollLeft += target.right - rect.right;
++    }
++    update();
++  };
++  const resize = () => {
++    cancelAnimationFrame(frame);
++    frame = requestAnimationFrame(() => {
++      reveal(
++        buttons().find(
++          (b) => b.dataset.reactionFilter === (activeFilter || "all")
++        )
++      );
++      update();
++    });
++  };
++  const click = (event) => {
++    const direction = event.target.closest(".rs-filter-prev")
++      ? -1
++      : event.target.closest(".rs-filter-next")
++        ? 1
++        : 0;
++    if (direction) {
++      event.preventDefault();
++      event.stopPropagation();
++      tabs.scrollBy({ left: direction * tabs.clientWidth * 0.75 });
++    }
++  };
++  const focus = (event) =>
++    reveal(event.target.closest("[data-reaction-filter]"));
++  const observer = new ResizeObserver(resize);
++  observer.observe(tabs);
++  tabs.addEventListener("scroll", update, { passive: true });
++  tabs.addEventListener("focusin", focus);
++  element.addEventListener("click", click);
++  resize();
++  return () => {
++    cancelAnimationFrame(frame);
++    observer.disconnect();
++    tabs.removeEventListener("scroll", update);
++    tabs.removeEventListener("focusin", focus);
++    element.removeEventListener("click", click);
++  };
++});
 diff --git a/plugins/discourse-reactions/assets/javascripts/discourse/modifiers/reaction-overflow.js b/plugins/discourse-reactions/assets/javascripts/discourse/modifiers/reaction-overflow.js
 new file mode 100644
 index 0000000..8794f74
@@ -187,7 +526,7 @@ index 0000000..8794f74
 +  };
 +});
 diff --git a/plugins/discourse-reactions/assets/stylesheets/common/discourse-reactions.scss b/plugins/discourse-reactions/assets/stylesheets/common/discourse-reactions.scss
-index 265b1c2..9c2f9e5 100644
+index 265b1c2..2807b8d 100644
 --- a/plugins/discourse-reactions/assets/stylesheets/common/discourse-reactions.scss
 +++ b/plugins/discourse-reactions/assets/stylesheets/common/discourse-reactions.scss
 @@ -1,3 +1,5 @@
@@ -196,7 +535,7 @@ index 265b1c2..9c2f9e5 100644
  html.discourse-reactions-no-select {
    -webkit-touch-callout: none; /* Disables long-touch menu */
  
-@@ -299,3 +301,85 @@ nav.post-controls .actions .reaction-button:focus {
+@@ -299,3 +301,137 @@ nav.post-controls .actions .reaction-button:focus {
  nav.post-controls .actions .reaction-button {
    margin: 0;
  }
@@ -282,26 +621,88 @@ index 265b1c2..9c2f9e5 100644
 +    display: none;
 +  }
 +}
++
++// Scoped to the enhanced reactions menu, not other UsersPopup consumers.
++.rs-reaction-filter-strip {
++  display: flex;
++  align-items: center;
++  min-width: 0;
++  width: 100%;
++
++  .users-popup__header {
++    flex: 1 1 0;
++    min-width: 0;
++    padding-inline: 0.25em;
++    overscroll-behavior-x: contain;
++    mask-image: none;
++    scrollbar-width: thin;
++
++    &::-webkit-scrollbar {
++      display: block;
++      height: 4px;
++    }
++  }
++
++  .users-popup__filter {
++    flex: 0 0 auto;
++  }
++
++  > .rs-filter-prev,
++  > .rs-filter-next {
++    flex: 0 0 auto;
++    padding: 0.5em 0.35em;
++  }
++}
++
++.rs-follow-reaction {
++  padding: 0.5em 0.75em;
++  border-bottom: 1px solid var(--primary-low);
++
++  .rs-use-reaction {
++    width: 100%;
++    gap: 0.5em;
++
++    .emoji {
++      width: 1.25em;
++      height: 1.25em;
++    }
++  }
++
++  .rs-follow-hint {
++    color: var(--primary-medium);
++    font-size: var(--font-down-1);
++  }
++}
 diff --git a/plugins/discourse-reactions/config/locales/client.en.yml b/plugins/discourse-reactions/config/locales/client.en.yml
-index e3e1327..a8376e5 100644
+index e3e1327..b60c84b 100644
 --- a/plugins/discourse-reactions/config/locales/client.en.yml
 +++ b/plugins/discourse-reactions/config/locales/client.en.yml
-@@ -6,6 +6,7 @@ en:
+@@ -6,6 +6,12 @@ en:
            discourse_reactions: "Discourse Reactions"
    js:
      discourse_reactions:
++      use_reaction: "Use this reaction"
++      already_used: "Already using this reaction"
++      choose_reaction: "Select a reaction to use it too"
++      scroll_left: "Scroll reactions left"
++      scroll_right: "Scroll reactions right"
 +      overflow_title: "%{count} more reaction types. Click to view all."
        reactions_title: "Reactions"
        reaction:
          forbidden: "You are not allowed to react or change your reaction to this post."
 diff --git a/plugins/discourse-reactions/config/locales/client.zh_CN.yml b/plugins/discourse-reactions/config/locales/client.zh_CN.yml
-index f42258b..8fc0a30 100644
+index f42258b..d7da2f7 100644
 --- a/plugins/discourse-reactions/config/locales/client.zh_CN.yml
 +++ b/plugins/discourse-reactions/config/locales/client.zh_CN.yml
-@@ -12,6 +12,7 @@ zh_CN:
+@@ -12,6 +12,12 @@ zh_CN:
            discourse_reactions: "Discourse Reactions"
    js:
      discourse_reactions:
++      use_reaction: "使用这个表情"
++      already_used: "已使用这个表情"
++      choose_reaction: "选择表情，即可使用同款"
++      scroll_left: "向左滚动表情"
++      scroll_right: "向右滚动表情"
 +      overflow_title: "另有 %{count} 种表情，点击查看全部。"
        reactions_title: "回应"
        reaction:

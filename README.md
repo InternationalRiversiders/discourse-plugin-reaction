@@ -7,6 +7,8 @@
 效果：帖子外部直接展示每种表情及其数量，例如 `👍 12 😂 5 ❤️ 3`；
 电脑最多一行、手机最多两行，超出种类用 `⋯ +N` 折叠，并隐藏重复的总数。
 N 为隐藏的表情种类数，点击后通过官方回应详情查看全部。
+点击具体表情会直接筛选对应人员；详情提供“使用这个表情”和左右滚动入口。
+已使用同款时禁用按钮，避免误撤回；替换回应、登录和失败回滚复用官方流程。
 以当前 Discourse 的官方实现为基础，保留显示定制，并补齐 reaction 的禁用表情校验。
 补丁新增一个布尔设置 `discourse_reactions_show_individual_counts`，默认开启以保持
 Riverside 当前展示。管理员可在 Reactions 插件设置或全站设置搜索该名称：
@@ -76,3 +78,14 @@ bash apply.sh /var/www/discourse
 应用脚本会先检查所有待应用补丁，再统一应用；任何不兼容都会中止构建。
 回归测试在 `test/reaction-deny-list-test.rb`，只允许独立数据库
 `river_reaction_security_test` 且 `RIVER_DISPOSABLE=1` 的环境运行。
+
+## 不计入点赞的别名和肤色
+
+`reaction-like-exclusions.patch` 扩展现有 `discourse_reactions_excluded_from_like`
+配置的匹配范围：基础表情覆盖其别名、可选冒号和所有肤色；指定肤色只覆盖该肤色。
+例如设置仍只需填 `-1`，其肤色和 `thumbsdown` 等别名也不再生成附带点赞。
+不按主观含义合并其他表情，也不改变用户设置值；此规则不受显示开关影响。
+官方点赞同步器使用同一份展开列表，若有历史误计记录，可由原同步流程修正，
+reaction 本身保留。部署前应先统计影响，不自动执行全站历史同步。
+
+隔离回归入口：`test/reaction-like-exclusions-test.rb`（包含禁用表情测试）。
