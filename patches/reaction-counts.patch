@@ -657,9 +657,9 @@ index 265b1c2..2807b8d 100644
 +.rs-follow-reaction {
 +  padding: 0.5em 0.75em;
 +  border-bottom: 1px solid var(--primary-low);
++  text-align: center;
 +
 +  .rs-use-reaction {
-+    width: 100%;
 +    gap: 0.5em;
 +
 +    .emoji {
