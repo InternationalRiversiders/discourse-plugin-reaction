@@ -1,0 +1,12 @@
+--- a/lib/stylesheet/manager.rb
++++ b/lib/stylesheet/manager.rb
+@@ -24,7 +24,8 @@
+   @@lock = Mutex.new
+ 
+   def self.cache
+-    @cache ||= DistributedCache.new("discourse_stylesheet")
++    # A/B builds can share a core Git SHA while carrying different local patches.
++    @cache ||= DistributedCache.new("discourse_stylesheet:#{fs_asset_cachebuster}")
+   end
+ 
+   def self.clear_theme_cache!

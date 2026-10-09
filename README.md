@@ -33,6 +33,8 @@ templates:
 在备用槽位执行 bootstrap 时，模板会从本仓库 `main` 拉取最新补丁，在
 `after_code` 阶段检查并应用，然后由正常构建流程编译资源。
 验证备用容器健康和页面后，再平滑重载 Nginx 切换流量。
+`stylesheet-build-cache.patch` 按样式内容指纹隔离样式链接缓存，防止 A/B
+使用同一官方 Git 版本但补丁不同的时候，新容器拿到旧容器的 CSS 链接。
 
 ```bash
 bash apply.sh /var/www/discourse
